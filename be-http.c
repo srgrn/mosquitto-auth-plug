@@ -71,7 +71,7 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 		//_log(LOG_DEBUG, "escaped_key=%s", escaped_key);
 		//_log(LOG_DEBUG, "escaped_val=%s", escaped_envvalue);
 
-		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 1);
+		data = (char *)malloc(strlen(escaped_key) + strlen(escaped_val) + 4);
 		if ( data == NULL ) {
 			_fatal("ENOMEM");
 			return (-1);
@@ -83,6 +83,8 @@ static int get_string_envs(CURL *curl, const char *required_env, char *querystri
 			strcat(querystring, data);
 		}
 		free(data);
+		curl_free(escaped_key);
+		curl_free(escaped_val);
 	}
 
 	if (escaped_key) free(escaped_key);
@@ -96,7 +98,7 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 	struct http_backend *conf = (struct http_backend *)handle;
 	CURL *curl;
 	struct curl_slist *headerlist=NULL;
-	int re;
+	int re, urllen = 0;
 	int respCode = 0;
 	int ok = BACKEND_DEFER;
 	char *url;
@@ -124,18 +126,19 @@ static int http_post(void *handle, char *uri, const char *clientid, const char *
 
 	//_log(LOG_NOTICE, "u=%s p=%s t=%s acc=%d", username, password, topic, acc);
 
-	url = (char *)malloc(strlen(conf->hostname) + strlen(uri) + 20);
+	urllen = strlen(conf->hostname) + strlen(uri) + 20;
+	url = (char *)malloc(urllen);
 	if (url == NULL) {
 		_fatal("ENOMEM");
 		return BACKEND_ERROR;
 	}
 
-	// enable the https
-	if (strcmp(conf->with_tls, "true") == 0){
-		sprintf(url, "https://%s:%d%s", conf->hostname, conf->port, uri);
-	}else{
-		sprintf(url, "http://%s:%d%s", conf->hostname, conf->port, uri);
-	}
+	// uri begins with a slash
+	snprintf(url, urllen, "%s://%s:%d%s",
+		strcmp(conf->with_tls, "true") == 0 ? "https" : "http",
+		conf->hostname ? conf->hostname : "127.0.0.1",
+		conf->port,
+		uri);
 
 	char* escaped_username = curl_easy_escape(curl, username, 0);
 	char* escaped_password = curl_easy_escape(curl, password, 0);
@@ -285,9 +288,10 @@ void *be_http_init()
 	_log(LOG_DEBUG, "getuser_uri=%s", getuser_uri);
 	_log(LOG_DEBUG, "superuser_uri=%s", superuser_uri);
 	_log(LOG_DEBUG, "aclcheck_uri=%s", aclcheck_uri);
+
 	_log(LOG_DEBUG, "getuser_params=%s", conf->getuser_envs);
 	_log(LOG_DEBUG, "superuser_params=%s", conf->superuser_envs);
-	_log(LOG_DEBUG, "aclcheck_paramsi=%s", conf->aclcheck_envs);
+	_log(LOG_DEBUG, "aclcheck_params=%s", conf->aclcheck_envs);
 	_log(LOG_DEBUG, "retry_count=%d", conf->retry_count);
 
 	return (conf);
@@ -302,7 +306,7 @@ void be_http_destroy(void *handle)
 	}
 };
 
-int be_http_getuser(void *handle, const char *username, const char *password, char **phash) {
+int be_http_getuser(void *handle, const char *username, const char *password, char **phash, const char *clientid) {
 	struct http_backend *conf = (struct http_backend *)handle;
 	int re, try;
 	if (username == NULL) {

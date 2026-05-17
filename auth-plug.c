@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <openssl/evp.h>
 #include <mosquitto.h>
+#include <mosquitto_broker.h>
 #include <mosquitto_plugin.h>
 #include <fnmatch.h>
 #include <time.h>
@@ -551,7 +552,11 @@ int mosquitto_auth_unpwd_check(void *userdata, const char *username, const char 
 			free(phash);
 			phash = NULL;
 		}
-		rc = b->getuser(b->conf, username, password, &phash);
+#if MOSQ_AUTH_PLUGIN_VERSION >=3	
+		rc = b->getuser(b->conf, username, password, &phash, mosquitto_client_id(client));
+#else
+		rc = b->getuser(b->conf, username, password, &phash, NULL);
+#endif
 		if (rc == BACKEND_ALLOW) {
 			backend_name = (*bep)->name;
 			authenticated = TRUE;
@@ -605,15 +610,24 @@ int mosquitto_auth_acl_check(void *userdata, const char *clientid, const char *u
 	int granted = MOSQ_DENY_ACL;
 #if MOSQ_AUTH_PLUGIN_VERSION >= 3
 	struct cliententry *e;
-	char *clientid = NULL;
-	char *username = NULL;
+	const char *clientid = NULL;
+	const char *username = NULL;
 	const char *topic = msg->topic;
 	HASH_FIND(hh, ud->clients, &client, sizeof(void *), e);
 	if (e) {
 		clientid = e->clientid;
 		username = e->username;
 	} else {
-		return MOSQ_ERR_PLUGIN_DEFER;
+		bool client_cert = (mosquitto_client_certificate(client) != NULL);
+
+		if (client_cert == true) {
+			clientid = mosquitto_client_id(client);
+			username = mosquitto_client_username(client);
+		}
+
+		if (client_cert == false || clientid == NULL || username == NULL) {
+			return MOSQ_ERR_PLUGIN_DEFER;
+		}
 	}
 #endif
 
@@ -767,7 +781,7 @@ int mosquitto_auth_psk_key_get(void *userdata, const char *hint, const char *ide
 	} else if (rc == BACKEND_DENY) {
 		psk_found = FALSE;
 	} else {
-		_log(LOG_DEBUG, "psk_key_get(%s, %s) from [%s] finds PSK: %d",
+		_log(LOG_DEBUG, "psk_key_get(hint=%s, identity=%s) from [%s] finds PSK: %d",
 			hint, identity, database,
 			psk_key ? 1 : 0);
 
